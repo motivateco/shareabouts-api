@@ -2,13 +2,15 @@
 
 from django.test import TestCase
 from django.test.client import RequestFactory
+from django.contrib.gis.geos import GEOSGeometry
 from django.core.files.base import ContentFile
-from django.core.urlresolvers import reverse
+from rest_framework.reverse import reverse
 from nose.tools import istest
 from sa_api_v2.cache import cache_buffer
 from sa_api_v2.models import Attachment, Action, User, DataSet, Place, Submission, Group
 from sa_api_v2.serializers import AttachmentSerializer, ActionSerializer, UserSerializer, FullUserSerializer, PlaceSerializer, DataSetSerializer, SubmissionSerializer
-from social.apps.django_app.default.models import UserSocialAuth
+from sa_api_v2.views import PlaceInstanceView
+from social_django.models import UserSocialAuth
 import json
 from os import path
 from mock import patch
@@ -55,10 +57,9 @@ class TestActionSerializer (TestCase):
         self.comment_action = Action.objects.create(thing=comment.submittedthing_ptr)
 
     def test_place_action_attributes(self):
-        serializer = ActionSerializer(self.place_action)
-        serializer.context = {
+        serializer = ActionSerializer(self.place_action, context={
             'request': RequestFactory().get('')
-        }
+        })
 
         self.assertIn('id', serializer.data)
         self.assertEqual(serializer.data.get('action'), 'create')
@@ -67,10 +68,9 @@ class TestActionSerializer (TestCase):
         self.assertNotIn('thing', serializer.data)
 
     def test_submission_action_attributes(self):
-        serializer = ActionSerializer(self.comment_action)
-        serializer.context = {
+        serializer = ActionSerializer(self.comment_action, context={
             'request': RequestFactory().get('')
-        }
+        })
 
         self.assertIn('id', serializer.data)
         self.assertEqual(serializer.data.get('action'), 'create')
@@ -80,13 +80,12 @@ class TestActionSerializer (TestCase):
 
     def test_prejoined_place_action_attributes(self):
         action = Action.objects.all()\
-            .select_related('thing__place' ,'thing__submission')\
+            .select_related('thing__full_place' ,'thing__full_submission')\
             .filter(thing=self.place_action.thing)[0]
 
-        serializer = ActionSerializer(action)
-        serializer.context = {
+        serializer = ActionSerializer(action, context={
             'request': RequestFactory().get('')
-        }
+        })
 
         self.assertIn('id', serializer.data)
         self.assertEqual(serializer.data.get('action'), 'create')
@@ -96,13 +95,12 @@ class TestActionSerializer (TestCase):
 
     def test_prejoined_submission_action_attributes(self):
         action = Action.objects.all()\
-            .select_related('thing__place' ,'thing__submission')\
+            .select_related('thing__full_place' ,'thing__full_submission')\
             .filter(thing=self.comment_action.thing)[0]
 
-        serializer = ActionSerializer(action)
-        serializer.context = {
+        serializer = ActionSerializer(action, context={
             'request': RequestFactory().get('')
-        }
+        })
 
         self.assertIn('id', serializer.data)
         self.assertEqual(serializer.data.get('action'), 'create')
@@ -188,7 +186,6 @@ class TestUserSerializer (TestCase):
 
     def tearDown(self):
         User.objects.all().delete()
-        UserSocialAuth.objects.all().delete()
         Group.objects.all().delete()
         DataSet.objects.all().delete()
 
@@ -202,9 +199,15 @@ class TestUserSerializer (TestCase):
         self.assertEqual(serializer.data['groups'], [])
 
     def test_full_serializer_returns_a_users_groups(self):
-        serializer = FullUserSerializer(self.special_user)
+        request = RequestFactory().get('')
+        serializer = FullUserSerializer(self.special_user, context={'request': request})
         self.assertIn('groups', serializer.data)
-        self.assertEqual(serializer.data['groups'], [{'dataset': reverse('dataset-detail', kwargs={'dataset_slug': 'ds1', 'owner_username': 'my_owning_user'}), 'name': 'special users'}])
+        self.assertEqual(serializer.data['groups'], [
+            {
+                'dataset': reverse('dataset-detail', request=request, kwargs={'dataset_slug': 'ds1', 'owner_username': 'my_owning_user'}),
+                'name': 'special users'
+            }
+        ])
 
 
 class TestPlaceSerializer (TestCase):
@@ -219,7 +222,7 @@ class TestPlaceSerializer (TestCase):
         self.owner = User.objects.create(username='myuser')
         self.dataset = DataSet.objects.create(slug='data',
                                               owner_id=self.owner.id)
-        self.place = Place.objects.create(dataset=self.dataset, geometry='POINT(2 3)')
+        self.place = Place.objects.create(dataset=self.dataset, geometry='POINT(2 3)', data=json.dumps({'public-attr': 1, 'private-attr': 2}))
         Submission.objects.create(dataset=self.dataset, place=self.place, set_name='comments')
         Submission.objects.create(dataset=self.dataset, place=self.place, set_name='comments')
 
@@ -227,8 +230,7 @@ class TestPlaceSerializer (TestCase):
         request = RequestFactory().get('')
         request.get_dataset = lambda: self.dataset
 
-        serializer = PlaceSerializer(None)
-        serializer.context = {'request': request}
+        serializer = PlaceSerializer(None, context={'request': request})
 
         data = serializer.data
         self.assertIsInstance(data, dict)
@@ -237,10 +239,46 @@ class TestPlaceSerializer (TestCase):
         request = RequestFactory().get('')
         request.get_dataset = lambda: self.dataset
 
-        serializer = PlaceSerializer(self.place)
-        serializer.context = {'request': request}
+        serializer = PlaceSerializer(self.place, context={'request': request})
 
         self.assertEqual(serializer.data['submission_sets']['comments']['length'], 2)
+
+    def test_place_hides_private_data_by_default(self):
+        request = RequestFactory().get('')
+        request.get_dataset = lambda: self.dataset
+
+        serializer = PlaceSerializer(self.place, context={'request': request})
+
+        self.assertIn('public-attr', serializer.data)
+        self.assertNotIn('private-attr', serializer.data)
+
+    def test_place_includes_private_data_when_specified(self):
+        request = RequestFactory().get('')
+        request.get_dataset = lambda: self.dataset
+
+        serializer = PlaceSerializer(self.place, context={'request': request, 'include_private': True})
+
+        self.assertIn('public-attr', serializer.data)
+        self.assertIn('private-attr', serializer.data)
+
+    def test_place_partial_update(self):
+        request = RequestFactory().get('')
+        request.get_dataset = lambda: self.dataset
+
+        view = PlaceInstanceView()
+        view.request = request
+
+        serializer = PlaceSerializer(
+            self.place,
+            context={'view': view, 'request': request, 'include_private': True},
+            data={'private-attr': 4, 'new-attr': 5, 'geometry': 'POINT(4 5)'},
+            partial=True,
+        )
+
+        self.assert_(serializer.is_valid())
+        serializer.save()
+        self.assertEqual(json.loads(self.place.data), {'public-attr': 1, 'private-attr': 4, 'new-attr': 5})
+        self.assertEqual(self.place.geometry.wkt, GEOSGeometry('POINT(4 5)').wkt)
 
 
 class TestSubmissionSerializer (TestCase):
@@ -252,6 +290,12 @@ class TestSubmissionSerializer (TestCase):
         Submission.objects.all().delete()
         cache_buffer.reset()
 
+        self.owner = User.objects.create(username='myuser')
+        self.dataset = DataSet.objects.create(slug='data',
+                                              owner_id=self.owner.id)
+        self.place = Place.objects.create(dataset=self.dataset, geometry='POINT(2 3)')
+        self.submission = Submission.objects.create(dataset=self.dataset, place=self.place, set_name='comments', data=json.dumps({'public-attr': 1, 'private-attr': 2}))
+
     def test_can_serlialize_a_null_instance(self):
         serializer = SubmissionSerializer(None)
         serializer.context = {
@@ -260,6 +304,24 @@ class TestSubmissionSerializer (TestCase):
 
         data = serializer.data
         self.assertIsInstance(data, dict)
+
+    def test_submission_hides_private_data_by_default(self):
+        request = RequestFactory().get('')
+        request.get_dataset = lambda: self.dataset
+
+        serializer = SubmissionSerializer(self.submission, context={'request': request})
+
+        self.assertIn('public-attr', serializer.data)
+        self.assertNotIn('private-attr', serializer.data)
+
+    def test_submission_includes_private_data_when_specified(self):
+        request = RequestFactory().get('')
+        request.get_dataset = lambda: self.dataset
+
+        serializer = SubmissionSerializer(self.submission, context={'request': request, 'include_private': True})
+
+        self.assertIn('public-attr', serializer.data)
+        self.assertIn('private-attr', serializer.data)
 
 
 class TestDataSetSerializer (TestCase):

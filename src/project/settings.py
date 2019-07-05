@@ -2,7 +2,6 @@ from os import environ
 import os
 
 DEBUG = False
-TEMPLATE_DEBUG = DEBUG
 SHOW_DEBUG_TOOLBAR = DEBUG
 DEBUG_TOOLBAR_PATCH_SETTINGS = False
 
@@ -12,6 +11,7 @@ ADMINS = (
 
 MANAGERS = ADMINS
 
+USE_GEODB = (environ.get('USE_GEODB', 'True').lower() == 'true')
 DATABASES = {
     'default': {
         'ENGINE': 'django.contrib.gis.db.backends.postgis', # Add 'backends.postgis', 'mysql', 'sqlite3' or 'oracle'.
@@ -77,22 +77,27 @@ STATICFILES_DIRS = ()
 
 #STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.staticfiles_storage'
 
-TEMPLATE_LOADERS = (
-    'django.template.loaders.filesystem.Loader',
-    'django.template.loaders.app_directories.Loader',
-)
-TEMPLATE_DIRS = ()
+TEMPLATES = [
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        'DIRS': [],
+        'APP_DIRS': True,
+        'OPTIONS': {
+            'context_processors': [
+                'django.template.context_processors.debug',
+                'django.template.context_processors.request',
+                'django.contrib.auth.context_processors.auth',
+                'django.contrib.messages.context_processors.messages',
 
-TEMPLATE_CONTEXT_PROCESSORS = (
-    "django.contrib.auth.context_processors.auth",
-    "django.core.context_processors.debug",
-    "django.core.context_processors.i18n",
-    "django.core.context_processors.media",
-    "django.core.context_processors.static",
-    "django.core.context_processors.tz",
-    "django.contrib.messages.context_processors.messages",
-    'django.core.context_processors.request',
-)
+                "django.template.context_processors.i18n",
+                "django.template.context_processors.media",
+                "django.template.context_processors.static",
+                "django.template.context_processors.tz",
+            ],
+            'debug': DEBUG,
+        },
+    },
+]
 
 ATTACHMENT_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
@@ -101,7 +106,7 @@ ATTACHMENT_STORAGE = 'django.core.files.storage.FileSystemStorage'
 # Django Rest Framework
 #
 REST_FRAMEWORK = {
-    'PAGINATE_BY': 100,
+    'PAGE_SIZE': 100,
     'PAGINATE_BY_PARAM': 'page_size'
 }
 
@@ -113,22 +118,24 @@ REST_FRAMEWORK = {
 WSGI_APPLICATION = 'project.wsgi.application'
 ROOT_URLCONF = 'project.urls'
 
-MIDDLEWARE_CLASSES = (
+MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.gzip.GZipMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'remote_client_user.middleware.RemoteClientMiddleware',
+    # TODO: Update to use dajngo-oauth-tools
+    # 'toolbar_client_user.middleware.RemoteClientMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.auth.middleware.SessionAuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
-    'social.apps.django_app.middleware.SocialAuthExceptionMiddleware',
+    # 'social.apps.django_app.middleware.SocialAuthExceptionMiddleware',
     # Uncomment the next line for simple clickjacking protection:
     # 'django.middleware.clickjacking.XFrameOptionsMiddleware',
 
     'sa_api_v2.middleware.RequestTimeLogger',
     'sa_api_v2.middleware.UniversalP3PHeader',
-)
+]
 
 # We only use the CORS Headers app for oauth. The Shareabouts API resources
 # have their own base view that handles CORS headers.
@@ -160,16 +167,21 @@ INSTALLED_APPS = (
     'rest_framework',
     'django_nose',
     'storages',
-    'social.apps.django_app.default',
     'raven.contrib.django.raven_compat',
     'django_ace',
     'django_object_actions',
     'djcelery',
     'loginas',
 
-    # OAuth
-    'provider',
-    'provider.oauth2',
+    # The old-style social.apps.django_app below is needed just for migrations.
+    # Uncomment the first of the following two lines and run manage.py migrate. After
+    # that, comment out the old-style social app again. Note that exactly one of the
+    # following lines should be uncommented at a time.
+    #
+    # 'social.apps.django_app.default',  # <-- Just for migrations; replaced by social_django
+    'social_django',
+
+    # CORS
     'corsheaders',
 
     # =================================
@@ -179,11 +191,15 @@ INSTALLED_APPS = (
     'sa_api_v2',
     'sa_api_v2.apikey',
     'sa_api_v2.cors',
-    'remote_client_user',
-
-    # GeoDjango comes last so that we can override its admin templates.
-    'django.contrib.gis',
+    # TODO: Update to use django-oauth-toolkit
+    # 'remote_client_user',
 )
+
+if USE_GEODB:
+    INSTALLED_APPS += (
+        # GeoDjango comes last so that we can override its admin templates.
+        'django.contrib.gis',
+    )
 
 
 ###############################################################################
@@ -201,22 +217,25 @@ CELERY_ACCEPT_CONTENT = ['json', 'msgpack', 'yaml', 'pickle']
 #
 
 AUTHENTICATION_BACKENDS = (
-    # See http://django-social-auth.readthedocs.org/en/latest/configuration.html
+    # See https://python-social-auth.readthedocs.io/en/latest/backends/index.html#supported-backends
     # for list of available backends.
-    'social.backends.twitter.TwitterOAuth',
-    'social.backends.facebook.FacebookOAuth2',
+    'social_core.backends.twitter.TwitterOAuth',
+    'social_core.backends.facebook.FacebookOAuth2',
     'sa_api_v2.auth_backends.CachedModelBackend',
 )
 
 AUTH_USER_MODEL = 'sa_api_v2.User'
+# TODO: Enable after Django 1.11 update # SOCIAL_AUTH_POSTGRES_JSONFIELD = True
+SOCIAL_AUTH_URL_NAMESPACE = 'social'
+
 SOCIAL_AUTH_USER_MODEL = 'sa_api_v2.User'
 SOCIAL_AUTH_PROTECTED_USER_FIELDS = ['email',]
 
-SOCIAL_AUTH_FACEBOOK_EXTRA_DATA = ['name', 'picture', 'bio']
+SOCIAL_AUTH_FACEBOOK_EXTRA_DATA = ['name', 'picture', 'about']
 SOCIAL_AUTH_TWITTER_EXTRA_DATA = ['name', 'description', 'profile_image_url']
 
 # Explicitly request the following extra things from facebook
-SOCIAL_AUTH_FACEBOOK_PROFILE_EXTRA_PARAMS = {'fields': 'id,name,picture.width(96).height(96),first_name,last_name,bio'}
+SOCIAL_AUTH_FACEBOOK_PROFILE_EXTRA_PARAMS = {'fields': 'id,name,picture.width(96).height(96),first_name,last_name,about'}
 
 SOCIAL_AUTH_LOGIN_ERROR_URL = 'remote-social-login-error'
 
@@ -227,12 +246,7 @@ SOCIAL_AUTH_LOGIN_ERROR_URL = 'remote-social-login-error'
 #
 
 # Tests (nose)
-TEST_RUNNER = 'django_nose.NoseTestSuiteRunner'
-SOUTH_TESTS_MIGRATE = True
-SOUTH_MIGRATION_MODULES = {
-    'oauth2': 'ignore',
-    'djcelery': 'ignore',
-}
+# TEST_RUNNER = 'django_nose.NoseTestSuiteRunner'
 
 # Debug toolbar
 def custom_show_toolbar(request):
@@ -304,11 +318,11 @@ LOGGING = {
             'propagate': True,
         },
 
-        'django.db.backends': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': True,
-        },
+        # 'django.db.backends': {
+        #     'handlers': ['console'],
+        #     'level': 'DEBUG',
+        #     'propagate': True,
+        # },
 
         'utils.request_timer': {
             'handlers': ['console'],
@@ -337,11 +351,13 @@ if 'DATABASE_URL' in environ:
     import dj_database_url
     # NOTE: Be sure that your DATABASE_URL has the 'postgis://' scheme.
     DATABASES = {'default': dj_database_url.config()}
-    DATABASES['default']['ENGINE'] = 'django.contrib.gis.db.backends.postgis'
+
+    if USE_GEODB:
+        DATABASES['default']['ENGINE'] = 'django.contrib.gis.db.backends.postgis'
 
 if 'DEBUG' in environ:
     DEBUG = (environ['DEBUG'].lower() == 'true')
-    TEMPLATE_DEBUG = DEBUG
+    TEMPLATES[0]['OPTIONS']['debug'] = DEBUG
     SHOW_DEBUG_TOOLBAR = DEBUG
 
 # Look for the following redis environment variables, in order
@@ -434,8 +450,8 @@ if BROKER_URL == 'django://':
 
 if SHOW_DEBUG_TOOLBAR:
     INSTALLED_APPS += ('debug_toolbar',)
-    MIDDLEWARE_CLASSES = (
-        MIDDLEWARE_CLASSES[:2] +
-        ('debug_toolbar.middleware.DebugToolbarMiddleware',) +
-        MIDDLEWARE_CLASSES[2:]
+    MIDDLEWARE = (
+        MIDDLEWARE[:2] +
+        ['debug_toolbar.middleware.DebugToolbarMiddleware'] +
+        MIDDLEWARE[2:]
     )

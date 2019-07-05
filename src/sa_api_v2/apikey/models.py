@@ -30,12 +30,12 @@ def generate_unique_api_key():
     import random
     api_key = ''
     while len(api_key) < KEY_SIZE:
-        more_key = str(random.getrandbits(256))
-        more_key = hashlib.sha256(more_key).hexdigest()
+        more_key = str(random.getrandbits(256)).encode()
+        more_key = hashlib.sha256(more_key).hexdigest().encode()
         more_key = base64.b64encode(
             more_key,
-            random.choice(['rA', 'aZ', 'gQ', 'hH', 'hG', 'aR', 'DD']))
-        more_key = more_key.rstrip('=')
+            random.choice(['rA', 'aZ', 'gQ', 'hH', 'hG', 'aR', 'DD']).encode())
+        more_key = more_key.decode().rstrip('=')
         api_key += more_key
     api_key = api_key[:KEY_SIZE]
     return api_key
@@ -43,11 +43,12 @@ def generate_unique_api_key():
 
 class ApiKey(CloneableModelMixin, models.Model):
     key = models.CharField(max_length=KEY_SIZE, unique=True, default=generate_unique_api_key)
-    logged_ip = models.IPAddressField(blank=True, null=True)
+    logged_ip = models.GenericIPAddressField(blank=True, null=True)
     last_used = models.DateTimeField(blank=True, default=now)
-    dataset = models.ForeignKey(DataSet, blank=True, related_name='keys')
+    dataset = models.ForeignKey(DataSet, on_delete=models.CASCADE, blank=True, related_name='keys')
 
     class Meta:
+        app_label = 'sa_api_v2'
         db_table = 'apikey_apikey'
 
     def login(self, ip_address):
@@ -65,6 +66,9 @@ class ApiKey(CloneableModelMixin, models.Model):
             return self.dataset.owner
         except AttributeError:
             return None
+
+    def __str__(self):
+        return self.__unicode__()
 
     def __unicode__(self):
         return self.key

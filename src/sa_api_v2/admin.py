@@ -5,18 +5,22 @@ via django.contrib.admin.
 
 import itertools
 import json
-import models
+from django.conf import settings
 from django.contrib.admin import SimpleListFilter
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.forms import UserChangeForm as BaseUserChangeForm
-from django.contrib.gis import admin
+if settings.USE_GEODB:
+    from django.contrib.gis import admin
+else:
+    from django.contrib import admin
 from django.contrib import messages
 from django.core.urlresolvers import reverse
-from django.forms import ValidationError
+from django.forms import ValidationError, ModelForm
 from django.http import HttpResponseRedirect
 from django.utils.html import escape
 from django_ace import AceWidget
 from django_object_actions import DjangoObjectActions
+from . import models
 from .apikey.models import ApiKey
 from .cors.models import Origin
 from .tasks import clone_related_dataset_data
@@ -77,7 +81,8 @@ class PrettyAceWidget (AceWidget):
         return super(PrettyAceWidget, self).render(name, value, attrs=attrs)
 
 
-class SubmittedThingAdmin(admin.OSMGeoAdmin):
+BaseGeoAdmin = admin.OSMGeoAdmin if settings.USE_GEODB else admin.ModelAdmin
+class SubmittedThingAdmin(BaseGeoAdmin):
     date_hierarchy = 'created_datetime'
     inlines = (InlineAttachmentAdmin,)
     list_display = ('id', 'created_datetime', 'submitter_name', 'dataset', 'visible', 'data')
@@ -119,8 +124,16 @@ class SubmittedThingAdmin(admin.OSMGeoAdmin):
         obj.save(silent=True)
 
 
+class AlwaysChangedModelForm (ModelForm):
+    def has_changed(self):
+        """ Should returns True if data differs from initial.
+        By always returning true even unchanged inlines will get validated and saved."""
+        return True
+
+
 class InlineApiKeyAdmin(admin.StackedInline):
     model = ApiKey
+    form = AlwaysChangedModelForm
     # raw_id_fields = ['apikey']
     extra = 0
     readonly_fields = ('edit_url',)
@@ -144,6 +157,7 @@ class InlineApiKeyAdmin(admin.StackedInline):
 
 class InlineOriginAdmin(admin.StackedInline):
     model = Origin
+    form = AlwaysChangedModelForm
     # raw_id_fields = ['origin']
     extra = 0
     readonly_fields = ('edit_url',)
@@ -229,7 +243,7 @@ class DataSetAdmin(DjangoObjectActions, admin.ModelAdmin):
 
     def clear_cache(self, request, obj):
         obj.clear_instance_cache()
-    
+
     def clone_dataset(self, request, obj):
         siblings = models.DataSet.objects.filter(owner=obj.owner)
         slugs = set([ds.slug for ds in siblings])
