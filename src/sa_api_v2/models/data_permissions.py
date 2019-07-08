@@ -1,4 +1,4 @@
-from django.contrib.gis.db import models
+from django.db import models
 from django.db.models.signals import post_save
 from .. import utils
 from .core import CacheClearingModel
@@ -21,7 +21,7 @@ class DataPermissionManager (models.Manager):
             can_update=can_update,
             can_destroy=can_destroy,
             can_access_protected=can_access_protected,
-            priority=priority))
+            priority=priority), bulk=False)
 
 
 class DataPermission (CloneableModelMixin, CacheClearingModel, models.Model):
@@ -88,46 +88,49 @@ class DataPermission (CloneableModelMixin, CacheClearingModel, models.Model):
 
 
 class DataSetPermission (DataPermission):
-    dataset = models.ForeignKey('DataSet', related_name='permissions')
+    dataset = models.ForeignKey('DataSet', on_delete=models.CASCADE, related_name='permissions')
     parent_attr = 'dataset'
 
     class Meta:
         app_label = 'sa_api_v2'
+
+    def __str__(self):
+        return self.__unicode__()
 
     def __unicode__(self):
         return '%s %s' % ('submitters', self.abilities())
 
 
 class GroupPermission (DataPermission):
-    group = models.ForeignKey('Group', related_name='permissions')
+    group = models.ForeignKey('Group', on_delete=models.CASCADE, related_name='permissions')
     parent_attr = 'group'
 
     class Meta:
         app_label = 'sa_api_v2'
 
-    def __unicode__(self):
+    def __str__(self):
         return '%s %s' % (self.group, self.abilities())
 
 
 class KeyPermission (DataPermission):
-    key = models.ForeignKey('sa_api_v2.ApiKey', related_name='permissions')
+    key = models.ForeignKey('sa_api_v2.ApiKey', on_delete=models.CASCADE, related_name='permissions')
     parent_attr = 'key'
 
     class Meta:
         app_label = 'sa_api_v2'
 
-    def __unicode__(self):
+    def __str__(self):
         return 'submitters %s' % (self.abilities(),)
 
 
 class OriginPermission (DataPermission):
-    origin = models.ForeignKey('sa_api_v2.Origin', related_name='permissions')
+    origin = models.ForeignKey('sa_api_v2.Origin', on_delete=models.CASCADE, related_name='permissions')
     parent_attr = 'origin'
 
     class Meta:
         app_label = 'sa_api_v2'
 
-    def __unicode__(self):
+    def __str__(self):
         return 'submitters %s' % (self.abilities(),)
 
 

@@ -20,11 +20,12 @@ import re
 
 class Origin(CloneableModelMixin, models.Model):
     pattern = models.CharField(max_length=100, help_text='The origin pattern, e.g., https://*.github.io, http://localhost:*, http*://map.phila.gov')
-    logged_ip = models.IPAddressField(blank=True, null=True)
+    logged_ip = models.GenericIPAddressField(blank=True, null=True)
     last_used = models.DateTimeField(blank=True, default=now)
-    dataset = models.ForeignKey(DataSet, blank=True, related_name='origins')
+    dataset = models.ForeignKey(DataSet, on_delete=models.CASCADE, blank=True, related_name='origins')
 
     class Meta:
+        app_label = 'sa_api_v2'
         db_table = 'cors_origin'
 
     def login(self, ip_address):
@@ -49,6 +50,9 @@ class Origin(CloneableModelMixin, models.Model):
             return self.dataset.owner
         except AttributeError:
             return None
+
+    def __str__(self):
+        return self.__unicode__()
 
     def __unicode__(self):
         return self.pattern

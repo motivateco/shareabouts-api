@@ -1,5 +1,5 @@
 from django.contrib.admin import ModelAdmin
-from django.contrib.gis import admin
+from django.contrib import admin
 from .. import models
 from .models import ApiKey
 
@@ -15,6 +15,7 @@ class ApiKeyAdmin(ModelAdmin):
     inlines = [InlineKeyPermissionAdmin]
     form = ApiKeyForm
     list_display = ('key', 'dataset', 'logged_ip', 'last_used')
+    raw_id_fields = ['dataset']
 
     class Media:
         js = (

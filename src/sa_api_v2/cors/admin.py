@@ -1,5 +1,5 @@
 from django.contrib.admin import ModelAdmin
-from django.contrib.gis import admin
+from django.contrib import admin
 from .. import models
 from sa_api_v2.cors.models import Origin
 
@@ -12,6 +12,7 @@ class InlineOriginPermissionAdmin(admin.TabularInline):
 class OriginAdmin(ModelAdmin):
     inlines = [InlineOriginPermissionAdmin]
     list_display = ('pattern', 'dataset', 'logged_ip', 'last_used')
+    raw_id_fields = ['dataset']
 
     class Media:
         js = (

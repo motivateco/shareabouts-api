@@ -1,9 +1,17 @@
 import re
 import time
-from django.contrib.gis.geos import GEOSGeometry, Point
-from django.contrib.gis.measure import D
+from django.conf import settings
+if settings.USE_GEODB:
+    from django.contrib.gis.geos import GEOSGeometry, Point
+    from django.contrib.gis.measure import D
 from functools import wraps
-from urlparse import urlparse, urljoin
+
+try:
+    # Python 2
+    from urlparse import urlparse, urljoin
+except:
+    # Python 3
+    from urllib.parse import urlparse, urljoin
 
 def isiterable(obj):
     try:
@@ -43,6 +51,11 @@ def to_geom(string):
             )
         else:
             geom = Point(lng, lat)
+
+    # Assume WGS84 (lat/lng) if no SRID is attached yet.
+    if not geom.srid:
+        geom.set_srid(4326)
+
     return geom
 
 def memo(f):

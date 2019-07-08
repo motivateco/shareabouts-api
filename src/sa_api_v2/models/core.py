@@ -1,7 +1,12 @@
 import ujson as json
-from django.contrib.gis.db import models
-from django.contrib.gis.db.models import query
 from django.conf import settings
+from django.db.models import query
+
+if settings.USE_GEODB:
+    from django.contrib.gis.db import models
+else:
+    from django.db import models
+
 from django.core.files.storage import get_storage_class
 from django.db.models.signals import post_save
 from django.utils.timezone import now
@@ -35,6 +40,16 @@ class SubmittedThingQuerySet (FilterByIndexMixin, query.QuerySet):
 class SubmittedThingManager (FilterByIndexMixin, models.Manager):
     use_for_related_fields = True
 
+    def create(self, silent=False, source='', reindex=True, *args, **kwargs):
+        """
+        Creates a new object with the given kwargs, saving it to the database
+        and returning the created object.
+        """
+        obj = self.model(**kwargs)
+        self._for_write = True
+        obj.save(silent=silent, source=source, reindex=reindex, force_insert=True, using=self.db)
+        return obj
+
     def get_queryset(self):
         return SubmittedThingQuerySet(self.model, using=self._db)
 
@@ -45,8 +60,8 @@ class SubmittedThing (CloneableModelMixin, CacheClearingModel, ModelWithDataBlob
     comment, a vote, etc.
 
     """
-    submitter = models.ForeignKey(User, related_name='things', null=True, blank=True)
-    dataset = models.ForeignKey('DataSet', related_name='things', blank=True)
+    submitter = models.ForeignKey(User, on_delete=models.CASCADE, related_name='things', null=True, blank=True)
+    dataset = models.ForeignKey('DataSet', on_delete=models.CASCADE, related_name='things', blank=True)
     visible = models.BooleanField(default=True, blank=True, db_index=True)
 
     objects = SubmittedThingManager()
@@ -69,6 +84,15 @@ class SubmittedThing (CloneableModelMixin, CacheClearingModel, ModelWithDataBlob
     def get_clone_save_kwargs(self):
         return {'silent': True, 'reindex': False, 'clear_cache': False}
 
+    def emit_action(self, source='', is_new=None):
+        action = Action()
+        action.action = 'create' if is_new else 'update'
+        action.thing = self
+        action.source = source
+        action.save()
+
+        return self
+
     def save(self, silent=False, source='', reindex=True, *args, **kwargs):
         is_new = (self.id == None)
 
@@ -79,11 +103,7 @@ class SubmittedThing (CloneableModelMixin, CacheClearingModel, ModelWithDataBlob
 
         # All submitted things generate an action if not silent.
         if not silent:
-            action = Action()
-            action.action = 'create' if is_new else 'update'
-            action.thing = self
-            action.source = source
-            action.save()
+            self.emit_action(is_new=is_new, source=source)
 
         return ret
 
@@ -93,12 +113,15 @@ class DataSet (CloneableModelMixin, CacheClearingModel, models.Model):
     A DataSet is a named collection of data, eg. Places, owned by a user,
     and intended for a coherent purpose, eg. display on a single map.
     """
-    owner = models.ForeignKey(User, related_name='datasets')
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='datasets')
     display_name = models.CharField(max_length=128)
-    slug = models.SlugField(max_length=128, default=u'')
+    slug = models.SlugField(max_length=128, default='')
 
     cache = cache.DataSetCache()
     # previous_version = 'sa_api_v1.models.DataSet'
+
+    def __str__(self):
+        return self.__unicode__()
 
     def __unicode__(self):
         return self.slug
@@ -146,7 +169,7 @@ class DataSet (CloneableModelMixin, CacheClearingModel, models.Model):
         # Clone all the places. Submissions will be cloned as part of the
         # places.
         for thing in self.things.all():
-            try: place = thing.place
+            try: place = thing.full_place
             except Place.DoesNotExist: continue
             if place:
                 place.clone(overrides={'dataset': onto})
@@ -179,7 +202,7 @@ class Webhook (TimeStampedModel):
         ('add', 'On add'),
     )
 
-    dataset = models.ForeignKey('DataSet', related_name='webhooks')
+    dataset = models.ForeignKey('DataSet', on_delete=models.CASCADE, related_name='webhooks')
     submission_set = models.CharField(max_length=128)
     event = models.CharField(max_length=128, choices=EVENT_CHOICES, default='add')
     url = models.URLField(max_length=2048)
@@ -188,17 +211,10 @@ class Webhook (TimeStampedModel):
         app_label = 'sa_api_v2'
         db_table = 'sa_api_webhook'
 
-    def __unicode__(self):
+    def __str__(self):
         return 'On %s data in %s' % (self.event, self.submission_set)
 
 
-class GeoSubmittedThingQuerySet (query.GeoQuerySet, SubmittedThingQuerySet):
-    pass
-
-
-class GeoSubmittedThingManager (models.GeoManager, SubmittedThingManager):
-    def get_queryset(self):
-        return GeoSubmittedThingQuerySet(self.model, using=self._db)
 
 
 class Place (SubmittedThing):
@@ -207,9 +223,14 @@ class Place (SubmittedThing):
     other submissions such as comments or surveys can be attached.
 
     """
-    geometry = models.GeometryField()
+    submittedthing_ptr = models.OneToOneField('SubmittedThing', parent_link=True, on_delete=models.CASCADE, related_name='full_place')
 
-    objects = GeoSubmittedThingManager()
+    if settings.USE_GEODB:
+        geometry = models.GeometryField()
+    else:
+        geometry = models.TextField()
+
+    objects = SubmittedThingManager()
     cache = cache.PlaceCache()
     # previous_version = 'sa_api_v1.models.Place'
 
@@ -223,7 +244,7 @@ class Place (SubmittedThing):
         for submission in self.submissions.all():
             submission.clone(overrides=data_overrides)
 
-    def __unicode__(self):
+    def __str__(self):
         return str(self.id)
 
 
@@ -233,7 +254,8 @@ class Submission (SubmittedThing):
     It belongs to a Place.
     Used for representing eg. comments, votes, ...
     """
-    place = models.ForeignKey(Place, related_name='submissions')
+    submittedthing_ptr = models.OneToOneField('SubmittedThing', parent_link=True, on_delete=models.CASCADE, related_name='full_submission')
+    place = models.ForeignKey(Place, on_delete=models.CASCADE, related_name='submissions')
     set_name = models.TextField(db_index=True)
 
     objects = SubmittedThingManager()
@@ -252,7 +274,7 @@ class Action (CacheClearingModel, TimeStampedModel):
     what happened when.
     """
     action = models.CharField(max_length=16, default='create')
-    thing = models.ForeignKey(SubmittedThing, db_column='data_id', related_name='actions')
+    thing = models.ForeignKey(SubmittedThing, on_delete=models.CASCADE, db_column='data_id', related_name='actions')
     source = models.TextField(blank=True, null=True)
 
     cache = cache.ActionCache()
@@ -282,7 +304,7 @@ class Attachment (CacheClearingModel, TimeStampedModel):
     """
     file = models.FileField(upload_to=timestamp_filename, storage=AttachmentStorage())
     name = models.CharField(max_length=128, null=True, blank=True)
-    thing = models.ForeignKey('SubmittedThing', related_name='attachments')
+    thing = models.ForeignKey('SubmittedThing', on_delete=models.CASCADE, related_name='attachments')
 
     cache = cache.AttachmentCache()
     # previous_version = 'sa_api_v1.models.Attachment'

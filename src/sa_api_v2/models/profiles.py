@@ -1,4 +1,4 @@
-from django.contrib.gis.db import models
+from django.db import models
 from django.contrib.auth.models import AbstractUser, UserManager
 from .caching import CacheClearingModel
 from .. import cache
@@ -22,7 +22,7 @@ class ShareaboutsUserManager (UserManager):
             auth=(key, secret), data={'grant_type': 'client_credentials'})
 
         if token_response.status_code != 200:
-            raise Exception(u'Received a {0} response while retrieving Twitter '
+            raise Exception('Received a {0} response while retrieving Twitter '
                 'authorization token: "{1}"'.format(
                 token_response.status_code, token_response.text))
 
@@ -70,7 +70,7 @@ class ShareaboutsUserManager (UserManager):
         response = requests.get(user_url, headers=headers)
 
         if response.status_code != 200:
-            raise Exception(u'Received a {0} response while trying to get user '
+            raise Exception('Received a {0} response while trying to get user '
                 'details for user "{2}" from twitter: {1}'.format(
                     response.status_code, response.text, username))
 
@@ -114,7 +114,7 @@ class Group (CloneableModelMixin, models.Model):
     """
     A group of submitters within a dataset.
     """
-    dataset = models.ForeignKey('DataSet', help_text='Which dataset does this group apply to?', related_name='groups')
+    dataset = models.ForeignKey('DataSet', on_delete=models.CASCADE, help_text='Which dataset does this group apply to?', related_name='groups')
     name = models.CharField(max_length=32, help_text='What is the name of the group to which users with this group belong? For example: "judges", "administrators", "winners", ...')
     submitters = models.ManyToManyField(User, related_name='_groups', blank=True)
 
