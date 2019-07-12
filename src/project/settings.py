@@ -178,8 +178,8 @@ INSTALLED_APPS = (
     # that, comment out the old-style social app again. Note that exactly one of the
     # following lines should be uncommented at a time.
     #
-    'social.apps.django_app.default',  # <-- Just for migrations; replaced by social_django
-    # 'social_django',
+    # 'social.apps.django_app.default',  # <-- Just for migrations; replaced by social_django
+    'social_django',
 
     # CORS
     'corsheaders',
